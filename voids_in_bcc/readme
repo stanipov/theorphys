@@ -1,0 +1,2 @@
+In this example we have a compound in a BCC (cubic body centered) structure. it is then relaxed, and the task is to calculate
+what is distribution of the tetrahedral voids in the structure before and after relaxation and plot the statistics.

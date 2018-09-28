@@ -1,4 +1,11 @@
 
-This is example of symmetryzation of a super cell (SC) after the MD (molecular dynamics) run. The system of interest is NH4BH4 with NH4 and BH4 complexes with a cubic symmetry (a rocksalt structure). During the simulations they perfrom rotations as well as some oscillation around equilibrium positions. I started the simulations from the somewhat distorted structure where the centers of the complexes moved away from ideal rocksalt positions. The task was to bring N and B to the rocksalt positions keeping "averaged" H surrounding. A simple arithmetic averaging of the H positions results in non-conservation of the N(B)-H bond lenghts. In fact, this is true for any atomic complex in a solid state.
-This folder contains the Jupyter notebook with all the outputs. To run the code on your machine, you will need to download and untar the data files as well as necessary custom libs from the "libs" folder of the repository.
+This is example of symmetryzation of a super cell (SC) after the MD (molecular dynamics) run. 
+The system of interest is NH4BH4 with NH4 and BH4 complexes with a cubic symmetry (a rocksalt structure). 
+During the simulations they perfrom rotations as well as some oscillation around equilibrium positions. 
+I started the simulations from the somewhat distorted structure where the centers of the complexes moved away 
+from ideal rocksalt positions. The task was to bring N and B to the rocksalt positions keeping "averaged" H surrounding. 
+A simple arithmetic averaging of the H positions results in non-conservation of the N(B)-H bond lenghts. In fact, this is 
+true for any atomic complex in a solid state.
+This folder contains the Jupyter notebook with all the outputs. To run the code on your machine, you will need to 
+download and untar the data files as well as necessary custom libs from the "libs" folder of the repository.
 The solutions here are intended to be tools which can be adapted by others in similar situations.

@@ -154,7 +154,6 @@ def cart2fract_3d_input(pos, lattice):
         pos_cart[i,:,:] = cart2fract(pos[i,:,:].T,lattice[:,:,i]).T
     return pos_cart
 
-
 def frac2cart_2d_input(pos_pbc, lattice, sc_atoms):
     """
     Conversion of fractional coordinates to cartesian ones
@@ -191,9 +190,17 @@ def frac2cart(dataset, a_lat):
 
 def unwrap_PBC(coords,num_atoms):
     """
-    Unwrapping the PBC put on the MD data
+    Unwrapping the PBC put on the MD data.
+    Inputs:
+    -- coords: a 2D array of the direct coordinates
+    -- num_atoms: either TOTAL number of atoms in 
+        the simulations box or a 1D array with 
+        each element giving total number of each element
     """
-    N_atoms = num_atoms.sum()
+    if type(num_atoms) == int:
+        N_atoms = num_atoms
+    else:
+        N_atoms = num_atoms.sum()
     dim = coords.shape
     n_steps = dim[0] / N_atoms
     for step in range(0, n_steps - 1):
@@ -268,18 +275,25 @@ def extract_atom_coordinates_3d(pos,sc_at,ind_atom):
     print('\n')
     return Ret
 
-def implement_PBC (data__):
+def implement_PBC(coords__, flag_pbc_map=False):
     """
-    Implement of the PBC on the supplied 2D array (elementwise!)
+    Implements the PBC on the dataset (input must be 2D array!).
+    Outputs:
+    -- coords: an array with PBC
+    -- pbc_map: an array with PBC tansformation from the unPBC to PBC coordinates
     """
-    data = np.copy(data__)
-    for i in range(data.shape[0]):
-        for j in range(3):
-            if data[i,j]>=1:
-                data[i,j]-=1
-            if data[i,j]<0:
-                data[i,j]+=1
-    return data
+    coords = np.copy(coords__)
+    for i in range(coords.shape[0]):
+        for j in range(coords.shape[1]):
+            if coords[i,j] >= 1:
+                coords[i,j] -=1
+            elif coords[i,j] < 0:
+                coords[i,j] +=1
+    if flag_pbc_map:
+        pbc_map = coords__ - coords
+        return coords, pbc_map
+    else:
+        return coords
     
 def segregate_by_planes(positions, plane_idx,tolerance=1e-02):
     """
@@ -401,3 +415,89 @@ def connected_components(graph):
         if node not in seen:
             all_result.append(component(node))
     return all_result
+##############################################################################
+#
+#     Various coordinate manipulation
+#
+##############################################################################      
+def sparse_array_for_degeneracy(array, degeneracy_deg=2):
+    """
+    If the same value enters the array several times ('degeneracy number') 
+    as the result of an algorithmic actions to construct it, 
+    we have to pick only 1 of 'degeneracy number'.
+    Inputs:
+    -- array : the input array to work on
+    -- degeneracy_deg : number of sure occurence of each value due
+                        the construction method
+    """
+    # find indeces of all the same values
+    # and treat them as verteces of a graph
+    same_vol_dict = {}
+    sorted_array = np.sort(array)
+    for i in range(array.shape[0]):
+        condition = np.isclose(sorted_array, sorted_array[i])
+        same_vol_dict[i] = set((np.argwhere(condition)).flatten())
+    # walk though the graph to find the connected components of it
+    unique_list = connected_components(same_vol_dict)
+    # reshape the index list into a NumPy array with each row
+    # having 'degeneracy_deg' numbers of indeces of the elements 
+    # sharing the same values
+    unique_array_lst = []
+    for element in unique_list:
+        if len(element) == degeneracy_deg:
+            unique_array_lst.append(element)
+        else:
+            t = np.array(element).reshape(len(element)/degeneracy_deg,degeneracy_deg)
+            for x in list(t):
+                unique_array_lst.append(list(x))
+    unique_vols_idx = np.array(unique_array_lst)
+    return np.copy(array[unique_vols_idx[:,0]])
+    
+def find_indeces(where2find, what2find):
+    """
+    Returns indeces of matching rows in a 2D array.. Operations are row-wise
+    Inputs: 
+    -- where2find: array to perfrom search in
+    -- what2find: array with rows to look for in where2find
+    """
+    indeces = []
+    for row in range(what2find.shape[0]):
+        condition = np.isclose(where2find,what2find[row,:])
+        indeces.append(np.where(condition.all(axis=1))[0])
+    return np.array(indeces)
+
+def arbitrary_dir_rotation(direct,angle, decimals = 6):
+    """
+    Rotation matrix along an arbitrary direction
+    Inputs:
+    --direct: direction to rotate along
+    --angle: angle to rotate for
+    --decimals: how many of decimal numbers to be left 
+    (i.e. to avoid 1e-17, but rather to have 0.0)
+    """
+    Rmat = np.zeros((3,3))
+    direct = np.array(direct)
+    ux,uy,uz = direct/np.linalg.norm(direct)
+    C = np.cos(np.deg2rad(angle))
+    S = np.sin(np.deg2rad(angle))
+    t = 1-C
+    Rmat[0,:] = np.array([t*ux**2+C, t*ux*uy-S*uz, t*ux*uz+S*uy])
+    Rmat[1,:] = np.array([t*ux*uy+S*uz, t*uy**2+C, t*uy*uz-S*ux])
+    Rmat[2,:] = np.array([t*ux*uz-S*uy, t*ux*uz+S*ux, t*uz**2+C])
+    return np.round(Rmat, decimals=decimals)  
+    
+def mk_displacements(Nxyz):
+    """
+    Creates the coordinates (essentially displacements)
+    of a unit cell (UC) in a super cell (SC).
+    Imput: numpy array with Nx, Ny, Nz -- numbers 
+    of UCs along X, Y, and Z direction respectively
+    """
+    for i in range(Nxyz[0]):
+        for j in range(Nxyz[1]):
+            for k in range(Nxyz[2]):
+                if i==0 and j==0 and k==0:
+                    displacements = np.array([i,j,k]).reshape(-1,1).T
+                else:
+                    displacements = np.append(displacements,np.array([i,j,k]).reshape(-1,1).T, axis=0)
+    return displacements

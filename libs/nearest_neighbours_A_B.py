@@ -1,8 +1,11 @@
 import numpy as np
 from scipy import linalg
 import sys
+import time
 #
 import multiprocessing as mp
+import  multiprocessing
+
 #
 from VASP_common_utilites import *
 ###################################################################
@@ -22,6 +25,23 @@ def progress(count, total, status=''):
 #     Finds all atomsB which are neighbors to atomsA
 #
 ##############################################################################
+def coordination_order_distance(norm,coordination_order):
+    """
+    Returns a radius of a i-th coordination sphere
+    Inputs:
+    --norm: 2D array of norms of (atomic_positions - coordinates of j-th atom)
+    --coordination_order: number of the coordination sphere
+    Output:
+    -- sphere radius (float)
+    """
+    _norm_ = np.copy(norm)
+    _bond_ = 0
+    for i in range(1,coordination_order+1):
+        _norm__i = _norm_-_bond_
+        idxs = np.argwhere(_norm_ > 0.00)
+        _bond_ += np.min(_norm_[idxs[:,0],idxs[:,1]]) 
+    return _bond_
+
 def mk_translation_vector():
     """
     Creates an array with rows as translation vectors.
@@ -37,7 +57,7 @@ def mk_translation_vector():
                 counter += 1
     return output
 #
-def extend_cell_by_tr_vect_dev(pos_step, tr_vect,latt):
+def extend_cell_by_tr_vect(pos_step, tr_vect,latt):
     """
     Translates the supplied 2D array along all posible directions
     determined by the "tr_vect". Direct (fractional) lattice coordinates
@@ -71,11 +91,11 @@ def find_all_neighbours(posA, posB,lattice,min_bond, max_bond):
     """
     coords = np.append(posA, posB,axis=0)
     translation_vect = mk_translation_vector()
-    extended_cell = extend_cell_by_tr_vect_dev(coords,translation_vect,lattice)
+    extended_cell = extend_cell_by_tr_vect(coords,translation_vect,lattice)
     # indexes of neighbours of given atom
     bonds_dict = {}
     for AtomI in range(0,posA.shape[0]):
-        dr_extended_cell = extend_cell_by_tr_vect_dev(coords-coords[AtomI,:],translation_vect,lattice)
+        dr_extended_cell = extend_cell_by_tr_vect(coords-coords[AtomI,:],translation_vect,lattice)
         dr_norm = np.linalg.norm(dr_extended_cell, axis=1,keepdims=True)
         nn_arr = np.argwhere(np.logical_and(dr_norm>= min_bond, dr_norm <= max_bond))
         bonds_dict[AtomI] = {}
@@ -91,6 +111,121 @@ def find_all_neighbours(posA, posB,lattice,min_bond, max_bond):
         bonds_dict[AtomI]['dr'] = np.copy(dr_extended_cell[nn_arr[:,0],:,nn_arr[:,2]])
     return bonds_dict
 
+def find_neighbours(coords,_lattice_, translation_vect):
+    """
+    This function generates a graph with indexes of the nearest neighbors of each atom
+    each vertex contains indeces of its neighbors.
+    Inputs:
+    -- coords: a set of coordinates in direct _lattice_, 2D
+    -- _lattice_: a matrix with _lattice_ vectors in rows
+    --translation_vect: a amtrix with rows of translation vectors to the nearest cells
+    Output:
+    -- a graph with indeces of all nearest neighbours of each atom of the input
+    """
+    #translation_vect = mk_translation_vector()
+    graph = {}
+    for AtomI in range(0,coords.shape[0]):
+        dr_extended_cell = extend_cell_by_tr_vect(coords-coords[AtomI,:],translation_vect,_lattice_)
+        dr_norm = np.linalg.norm(dr_extended_cell, axis=1)
+        first_coordination_dist = coordination_order_distance(dr_norm,1)
+        second_coordination_dist = coordination_order_distance(dr_norm,2)
+        # account for possible numerical errors:
+        distance_min = first_coordination_dist*0.99
+        # consider only half-distance between first and second coordination
+        # spheres, so each atom is not counted twice
+        distance_max = second_coordination_dist-first_coordination_dist*0.5
+        nn_ = np.argwhere(np.logical_and(dr_norm >= distance_min, dr_norm < distance_max))
+        graph[AtomI] = {}
+        graph[AtomI] = set(nn_[:,0])
+    return graph
+
+def get_coordination_radii(_coordinates_,_lattice_,_coordination_orders_,trans_vect):
+    """
+    Returns coodination radii and the norm of the displaced cell for each atom and time _step_
+    """
+    coordinations = np.zeros((_coordinates_.shape[0],_coordinates_.shape[2],_coordination_orders_.shape[0]))
+    for _step_ in range(_coordinates_.shape[0]):
+        for AtomI in range(_coordinates_.shape[2]):
+            _dr_tmp = extend_cell_by_tr_vect((_coordinates_[_step_,:,:].T - _coordinates_[_step_,:,AtomI]),trans_vect,_lattice_[:,:,_step_])
+            _dr_tmp_norm = np.linalg.norm(_dr_tmp,axis=1)
+            for coord_idx in range(_coordination_orders_.shape[0]):
+                coordinations[_step_,AtomI,coord_idx] = coordination_order_distance(_dr_tmp_norm,_coordination_orders_[coord_idx])
+    return coordinations
+
+def identify_polymers(_coordinates_,_lattice_,_coordinations_,trans_vect):
+    """
+    A smart way to idintify polymeric/dymerics chains based on usage on first and 
+    second coordination spheres radii. In case if an abrupt bond break happens,
+    a the minimal and maximal distances are corrested with respect of the average 
+    coordination radii.
+    """
+    output = {}
+    for step in range(_coordinates_.shape[0]):
+        graph = {}
+        coords = _coordinates_[step,:,:].T
+        _lattice_step = _lattice_[:,:,step]
+        for atom_idx in range(_coordinates_.shape[2]):
+            dr_extended_cell = extend_cell_by_tr_vect(coords-coords[atom_idx,:],trans_vect,_lattice_step)
+            dr_step_atom = np.linalg.norm(dr_extended_cell, axis=1)
+            # identify minimum distance and maximum distances
+            # first coordination sphere radii
+            first__coordinations_ = _coordinations_[:,atom_idx,0]
+            # second coordination sphere radii
+            second__coordinations_ = _coordinations_[:,atom_idx,1]
+            # average values
+            first_coordination_aver = np.average(first__coordinations_)
+            second_coordination_aver = np.average(second__coordinations_)
+            # standard deviation
+            first_coordination_std = np.std(first__coordinations_)
+            second_coordination_std = np.std(first__coordinations_)
+            # minumim distance
+            min_distance  = first__coordinations_[step] - first_coordination_std
+            if min_distance > first_coordination_aver:
+                min_distance = first_coordination_aver - first_coordination_std
+            # maximum distance:
+            if second__coordinations_[step] >=second_coordination_aver:
+                _dr_aver = second_coordination_aver - first_coordination_aver
+                max_distance =  first_coordination_aver + _dr_aver/2
+            else:
+                max_distance = first__coordinations_[step] + ( second__coordinations_[step] - first__coordinations_[step])/2
+            nn_ = np.argwhere(np.logical_and(dr_step_atom >= min_distance, dr_step_atom < max_distance))
+            if nn_.shape[0] == 0:
+                graph[atom_idx] =  set([atom_idx])
+            else:
+                graph[atom_idx] =  set(nn_[:,0])
+        output[step] = connected_components(graph)
+    return output
+
+def identify_polymers_old(coords_3d,_lattice_,start_i=0):
+    """
+    Identifies polymeric chains of atoms of the same element.
+    Inputs:
+    -- coords_3d: a 3D array of coordinates in a form of [steps,:,:]
+    -- _lattice_: a 3D array of lattice vectors in a form of [:,:,steps]
+    -- start_i: optionall, one cane specify the first index in the output dictionary
+    Output:
+    -- a dictionary with indeces of nearest neighbours or polymeric chains
+    """
+    output_dict = {}
+    translation_vect = mk_translation_vector()
+    for i in range(0,coords_3d.shape[0]):
+        gr = find_neighbours(coords_3d[i,:,:].T, _lattice_[:,:,i], translation_vect)
+        output_dict[i+start_i] = connected_components(gr)
+    return output_dict
+
+def collect_mp_output(res_dict):
+    """
+    A simple function to merge a dictionary of dictionaries
+    into one dictionary
+    """
+    output_dict = {}
+    cnt = 0
+    for (idx, key) in enumerate(res_dict.keys()):
+        chunk_dict = res_dict[idx]
+        for i in range(len(chunk_dict.keys())):
+            output_dict[cnt] = chunk_dict[i] #copy.deepcopy(chunk_dict[i])
+            cnt += 1
+    return output_dict
 
 def complexes_extract(pos_A,pos_B,lattice,ligands_per_center,min_AB,max_AB, silent=True):
     """
@@ -119,7 +254,6 @@ def complexes_extract(pos_A,pos_B,lattice,ligands_per_center,min_AB,max_AB, sile
                 AB_dr_dict[AtomNum][step,:,:] = bonds_dict_AB[AtomNum]['dr']
             progress(step+1,num_steps)
     return AB_dr_dict
-
 
 def connected_components(graph):
     """
@@ -171,15 +305,23 @@ def parallelize_framework(function, _ARGS_, double_transpose_fix, nchunks = 4, n
     OUTPUT:
     -- a dictionary with keys in order of the arguments chunks. You have to correctly assemble your data from it
     """
+    # make pool of workers
     _pool_ = mp.Pool(processes=npools)
     # submit the jobs
     Nstart = 0
     Nstop = _ARGS_[0][0].shape[0] 
     step = (Nstop-Nstart) / nchunks
     jobs = {}
+    start_time = time.time()
+    print('Submitting %d chunks to %d workers' % (nchunks, npools))
     for index in range(nchunks):
         starti = Nstart+index*step
-        endi = min(Nstart+(index+1)*step, Nstop)
+        # account for possibility that Nstart+(index+1)*step might be < Nstop
+        # and then we miss some of the data points
+        if index == nchunks-1:
+            endi = Nstop
+        else:
+            endi = min(Nstart+(index+1)*step, Nstop)
         arg_list = []
         for (IDX,arg_) in enumerate(_ARGS_[0]):
             if double_transpose_fix[IDX]:
@@ -195,4 +337,7 @@ def parallelize_framework(function, _ARGS_, double_transpose_fix, nchunks = 4, n
     # collect the results
     for idx in range(len(jobs)):
         job_result[idx] = jobs[idx].get()
+    print('Time elapsed %f sec' % (time.time() - start_time))
+    #terminate the pool to avoid memory leaks
+    _pool_.terminate()
     return job_result

@@ -5,7 +5,6 @@ import time
 #
 import multiprocessing as mp
 import  multiprocessing
-
 #
 from VASP_common_utilites import *
 ###################################################################
@@ -141,7 +140,7 @@ def find_neighbours(coords,_lattice_, translation_vect):
 
 def get_coordination_radii(_coordinates_,_lattice_,_coordination_orders_,trans_vect):
     """
-    Returns coodination radii and the norm of the displaced cell for each atom and time _step_
+    Returns coodination radii
     """
     coordinations = np.zeros((_coordinates_.shape[0],_coordinates_.shape[2],_coordination_orders_.shape[0]))
     for _step_ in range(_coordinates_.shape[0]):
@@ -154,9 +153,9 @@ def get_coordination_radii(_coordinates_,_lattice_,_coordination_orders_,trans_v
 
 def identify_polymers(_coordinates_,_lattice_,_coordinations_,trans_vect):
     """
-    A smart way to idintify polymeric/dymerics chains based on usage on first and 
+    A smart way to idintify polymeric chains/dimers based on usage of first and 
     second coordination spheres radii. In case if an abrupt bond break happens,
-    a the minimal and maximal distances are corrested with respect of the average 
+    the minimal and maximal distances are corrected with respect to the average 
     coordination radii.
     """
     output = {}
